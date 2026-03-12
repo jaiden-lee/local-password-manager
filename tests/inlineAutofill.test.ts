@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildInlineViewModel } from "../src/extension/lib/inlineAutofill";
+import { buildAutofillPromptViewModel } from "../src/extension/lib/inlineAutofill";
 import type { PopupState } from "../src/extension/lib/types";
 
 function createBaseState(): PopupState {
@@ -31,16 +31,17 @@ function createBaseState(): PopupState {
   };
 }
 
-describe("buildInlineViewModel", () => {
-  it("shows setup state when the site is saved but fields are not mapped", () => {
-    const model = buildInlineViewModel(createBaseState());
+describe("buildAutofillPromptViewModel", () => {
+  it("shows setup guidance when the site exists but fields are not mapped", () => {
+    const model = buildAutofillPromptViewModel(createBaseState());
 
     expect(model.visible).toBe(true);
-    expect(model.triggerLabel).toBe("Set up autofill");
+    expect(model.title).toBe("Set up autofill?");
+    expect(model.primaryLabel).toBe("Map fields");
     expect(model.showSetupAction).toBe(true);
   });
 
-  it("uses a direct fill label when exactly one account exists", () => {
+  it("offers a direct fill prompt when exactly one account exists", () => {
     const state = createBaseState();
     state.mapping = {
       mappingId: "mapping_1",
@@ -91,10 +92,11 @@ describe("buildInlineViewModel", () => {
       }
     ];
 
-    const model = buildInlineViewModel(state);
+    const model = buildAutofillPromptViewModel(state);
 
-    expect(model.triggerLabel).toBe("Fill Work");
-    expect(model.helperText).toContain("me@example.com");
+    expect(model.title).toBe("Would you like to autofill?");
+    expect(model.primaryLabel).toBe("Fill Work");
+    expect(model.subtitle).toContain("me@example.com");
   });
 
   it("shows chooser wording when multiple accounts exist", () => {
@@ -156,10 +158,9 @@ describe("buildInlineViewModel", () => {
       }
     ];
 
-    const model = buildInlineViewModel(state);
+    const model = buildAutofillPromptViewModel(state);
 
-    expect(model.triggerLabel).toBe("Choose account (2)");
+    expect(model.primaryLabel).toBe("Choose account (2)");
     expect(model.accountCount).toBe(2);
   });
 });
-

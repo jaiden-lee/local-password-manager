@@ -1,10 +1,11 @@
 import type { PopupState, StoredAccount } from "./types";
 
-export interface InlineViewModel {
+export interface AutofillPromptViewModel {
   visible: boolean;
-  triggerLabel: string;
-  helperText: string;
+  title: string;
+  subtitle: string;
   accountCount: number;
+  primaryLabel: string;
   showSetupAction: boolean;
 }
 
@@ -12,13 +13,16 @@ export function pickPrimaryAccount(accounts: StoredAccount[]): StoredAccount | n
   return accounts[0] ?? null;
 }
 
-export function buildInlineViewModel(state: PopupState | null): InlineViewModel {
+export function buildAutofillPromptViewModel(
+  state: PopupState | null
+): AutofillPromptViewModel {
   if (!state?.site) {
     return {
       visible: false,
-      triggerLabel: "",
-      helperText: "",
+      title: "",
+      subtitle: "",
       accountCount: 0,
+      primaryLabel: "",
       showSetupAction: false
     };
   }
@@ -26,9 +30,10 @@ export function buildInlineViewModel(state: PopupState | null): InlineViewModel 
   if (!state.mapping) {
     return {
       visible: true,
-      triggerLabel: "Set up autofill",
-      helperText: "Map the username and password fields for this login page.",
+      title: "Set up autofill?",
+      subtitle: "Map the username and password fields for this page before filling credentials here.",
       accountCount: state.accounts.length,
+      primaryLabel: "Map fields",
       showSetupAction: true
     };
   }
@@ -37,20 +42,22 @@ export function buildInlineViewModel(state: PopupState | null): InlineViewModel 
     const account = pickPrimaryAccount(state.accounts);
     return {
       visible: true,
-      triggerLabel: account ? `Fill ${account.label}` : "Fill account",
-      helperText: account
-        ? `Ready to fill ${account.username}.`
-        : "Add a demo account or remap fields to continue.",
+      title: "Would you like to autofill?",
+      subtitle: account
+        ? `Use ${account.label} (${account.username}) on this page.`
+        : "A saved mapping exists, but there are no accounts to fill yet.",
       accountCount: state.accounts.length,
+      primaryLabel: account ? `Fill ${account.label}` : "Fill account",
       showSetupAction: false
     };
   }
 
   return {
     visible: true,
-    triggerLabel: `Choose account (${state.accounts.length})`,
-    helperText: "Pick which saved account to fill on this page.",
+    title: "Would you like to autofill?",
+    subtitle: "Choose which saved account to use on this page.",
     accountCount: state.accounts.length,
+    primaryLabel: `Choose account (${state.accounts.length})`,
     showSetupAction: false
   };
 }
