@@ -1,0 +1,189 @@
+:root {
+  color-scheme: light;
+  --bg: #f6f7f2;
+  --panel: #fffdf6;
+  --text: #172016;
+  --muted: #586555;
+  --accent: #0e6b56;
+  --accent-strong: #084b3d;
+  --warn: #c16b00;
+  --danger: #b42318;
+  --border: #d8decd;
+  --shadow: rgba(17, 24, 39, 0.08);
+  font-family: "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+  min-width: 360px;
+  background: radial-gradient(circle at top, #ffffff 0%, var(--bg) 60%);
+  color: var(--text);
+}
+
+#app {
+  padding: 16px;
+}
+
+.shell {
+  display: grid;
+  gap: 12px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 10px 30px var(--shadow);
+  padding: 14px;
+}
+
+.hero {
+  display: grid;
+  gap: 4px;
+}
+
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.subtitle,
+.hint,
+.status {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.status.warn {
+  color: var(--warn);
+}
+
+.status.error {
+  color: var(--danger);
+}
+
+.actions,
+.row,
+.form-grid,
+.account-list {
+  display: grid;
+  gap: 8px;
+}
+
+.row.inline {
+  grid-template-columns: 1fr 1fr;
+}
+
+label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+input,
+select,
+button,
+textarea {
+  font: inherit;
+}
+
+input,
+select {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: white;
+}
+
+button {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 14px;
+  background: var(--accent);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: #e9efe5;
+  color: var(--text);
+}
+
+button.warn {
+  background: var(--warn);
+}
+
+button.danger {
+  background: var(--danger);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: #edf5ef;
+  color: var(--accent-strong);
+}
+
+.kv {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.kv strong {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 0;
+}
+
+details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.account-chip {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.account-chip input {
+  margin: 0;
+}
+
+.account-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.account-meta {
+  font-size: 12px;
+  color: var(--muted);
+}

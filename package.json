@@ -1,0 +1,19 @@
+{
+  "name": "local-password-manager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first password manager prototype with a Chromium extension and future Windows desktop host.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.24",
+    "esbuild": "^0.25.1",
+    "jsdom": "^26.0.0",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  }
+}
+

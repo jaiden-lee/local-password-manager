@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Local Password Manager Prototype",
+  "version": "0.1.0",
+  "description": "Prototype Chromium extension for field mapping and local demo autofill.",
+  "permissions": ["storage", "tabs", "activeTab"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Local Password Manager"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
+
