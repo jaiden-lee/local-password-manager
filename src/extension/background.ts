@@ -52,8 +52,8 @@ async function getTab(tabId?: number): Promise<chrome.tabs.Tab | null> {
   return activeTab ?? null;
 }
 
-async function buildPopupState(tabId?: number): Promise<PopupState> {
-  const tab = await getTab(tabId);
+async function buildPopupState(tabId?: number, senderTabId?: number): Promise<PopupState> {
+  const tab = await getTab(tabId ?? senderTabId);
   const currentUrl = tab?.url ?? "";
   const normalizedUrl = currentUrl ? normalizeUrl(currentUrl) : null;
   const storage = await getStorage();
@@ -240,16 +240,25 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
 });
 
 chrome.runtime.onMessage.addListener((message: BackgroundMessage, _sender, sendResponse) => {
+  const senderTabId = _sender.tab?.id;
+
   const respond = async (): Promise<BackgroundResponse> => {
     switch (message.type) {
       case "GET_POPUP_STATE":
-        return { ok: true, state: await buildPopupState(message.tabId) };
+        return { ok: true, state: await buildPopupState(message.tabId, senderTabId) };
 
       case "SAVE_SITE_RULE":
-        return handleSaveSiteRule(message.tabId, message.displayName, message.pathPrefix);
+        if (message.tabId === undefined && senderTabId === undefined) {
+          return { ok: false, error: "No browser tab context was available for this action." };
+        }
+        return handleSaveSiteRule(message.tabId ?? senderTabId!, message.displayName, message.pathPrefix);
 
       case "START_FIELD_MAPPING": {
-        const response = await sendToTab(message.tabId, {
+        const tabId = message.tabId ?? senderTabId;
+        if (tabId === undefined) {
+          return { ok: false, error: "No browser tab context was available for field mapping." };
+        }
+        const response = await sendToTab(tabId, {
           type: "BEGIN_FIELD_MAPPING",
           siteId: message.siteId
         });
@@ -275,8 +284,11 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, _sender, sendR
       }
 
       case "FILL_DEMO_ACCOUNT":
+        if (message.tabId === undefined && senderTabId === undefined) {
+          return { ok: false, error: "No browser tab context was available for fill." };
+        }
         return handleFill(
-          message.tabId,
+          message.tabId ?? senderTabId!,
           message.siteId,
           message.accountId,
           message.forceOverwrite

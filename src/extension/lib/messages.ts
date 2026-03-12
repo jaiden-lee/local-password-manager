@@ -10,11 +10,11 @@ import type {
 
 export type BackgroundMessage =
   | { type: "GET_POPUP_STATE"; tabId?: number }
-  | { type: "SAVE_SITE_RULE"; tabId: number; displayName: string; pathPrefix: string }
-  | { type: "START_FIELD_MAPPING"; tabId: number; siteId: string }
+  | { type: "SAVE_SITE_RULE"; tabId?: number; displayName: string; pathPrefix: string }
+  | { type: "START_FIELD_MAPPING"; tabId?: number; siteId: string }
   | { type: "CLEAR_MAPPING"; siteId: string }
   | { type: "SAVE_DEMO_ACCOUNT"; siteId: string; label: string; username: string; password: string }
-  | { type: "FILL_DEMO_ACCOUNT"; tabId: number; siteId: string; accountId: string; forceOverwrite?: boolean }
+  | { type: "FILL_DEMO_ACCOUNT"; tabId?: number; siteId: string; accountId: string; forceOverwrite?: boolean }
   | { type: "SAVE_FIELD_MAPPING_FROM_PAGE"; payload: SaveFieldMappingPayload }
   | { type: "PAGE_ANALYSIS_UPDATE"; url: string; analysis: AnalyzePageResponse };
 
@@ -36,4 +36,3 @@ export type ContentResponse =
   | ({ ok: true } & FillFieldsResponse)
   | { ok: true; accepted: true }
   | { ok: false; error: string };
-

@@ -238,7 +238,7 @@ function render(): void {
         <div class="hero">
           <span class="eyebrow">Prototype</span>
           <div class="title">Local Password Manager</div>
-          <div class="subtitle">Explicit fill only. Demo accounts only. No native host yet.</div>
+          <div class="subtitle">Use the new inline fill chip on the page. This popup is for setup, remapping, and fallback actions.</div>
         </div>
         <div class="pill">${state.site ? "Rule matched" : unsupported ? "Unsupported tab" : "No rule saved"}</div>
       </section>
