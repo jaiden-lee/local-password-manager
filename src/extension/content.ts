@@ -461,6 +461,15 @@ class FocusPromptController {
     return event.composedPath().includes(this.host);
   }
 
+  containsElement(element: HTMLElement | null): boolean {
+    if (!element) {
+      return false;
+    }
+
+    const rootNode = element.getRootNode();
+    return rootNode === this.shadow || this.host.contains(element);
+  }
+
   private handleOutsidePointerDown = (event: PointerEvent) => {
     if (this.isEventInside(event)) {
       return;
@@ -730,6 +739,9 @@ document.addEventListener("focusin", (event) => {
   }
 
   if (event.target instanceof HTMLElement) {
+    if (promptController.containsElement(event.target)) {
+      return;
+    }
     void promptController.maybeOpenForTarget(event.target);
   }
 });
