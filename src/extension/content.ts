@@ -66,7 +66,18 @@ function escapeHtml(value: string): string {
 }
 
 async function sendBackgroundMessage(message: BackgroundMessage): Promise<BackgroundResponse> {
-  return chrome.runtime.sendMessage(message) as Promise<BackgroundResponse>;
+  try {
+    return (await chrome.runtime.sendMessage(message)) as BackgroundResponse;
+  } catch (error) {
+    const messageText =
+      error instanceof Error ? error.message : "The extension context is no longer available.";
+    return {
+      ok: false,
+      error: messageText.includes("Extension context invalidated")
+        ? "The extension was reloaded. Refresh this page and try again."
+        : messageText
+    };
+  }
 }
 
 async function loadPopupState(): Promise<PopupState | null> {
@@ -79,11 +90,15 @@ async function loadPopupState(): Promise<PopupState | null> {
 }
 
 async function sendPageAnalysisUpdate(): Promise<void> {
-  await chrome.runtime.sendMessage({
-    type: "PAGE_ANALYSIS_UPDATE",
-    url: window.location.href,
-    analysis: analyzePage()
-  });
+  try {
+    await chrome.runtime.sendMessage({
+      type: "PAGE_ANALYSIS_UPDATE",
+      url: window.location.href,
+      analysis: analyzePage()
+    });
+  } catch {
+    // The page may still be running an old content script after an extension reload.
+  }
 }
 
 class FocusPromptController {
@@ -95,7 +110,6 @@ class FocusPromptController {
   private footerEl: HTMLDivElement;
   private statusEl: HTMLDivElement;
   private state: PopupState | null = null;
-  private suppressNextBlurClose = false;
 
   constructor() {
     this.host = document.createElement("div");
@@ -211,20 +225,17 @@ class FocusPromptController {
 
     document.addEventListener("pointerdown", this.handleOutsidePointerDown, true);
     document.addEventListener("keydown", this.handleDocumentKeyDown, true);
-    this.shadow.addEventListener("pointerdown", this.handleInsidePointerDown, true);
   }
 
   destroy(): void {
     this.hide();
     document.removeEventListener("pointerdown", this.handleOutsidePointerDown, true);
     document.removeEventListener("keydown", this.handleDocumentKeyDown, true);
-    this.shadow.removeEventListener("pointerdown", this.handleInsidePointerDown, true);
   }
 
   hide(): void {
     this.host.remove();
     this.state = null;
-    this.suppressNextBlurClose = false;
   }
 
   async maybeOpenForTarget(target: HTMLElement): Promise<void> {
@@ -450,26 +461,11 @@ class FocusPromptController {
     return event.composedPath().includes(this.host);
   }
 
-  hasFocusWithin(): boolean {
-    return Boolean(this.shadow.activeElement);
-  }
-
-  shouldIgnoreBlurClose(): boolean {
-    return this.suppressNextBlurClose || this.hasFocusWithin();
-  }
-
   private handleOutsidePointerDown = (event: PointerEvent) => {
     if (this.isEventInside(event)) {
       return;
     }
     this.hide();
-  };
-
-  private handleInsidePointerDown = () => {
-    this.suppressNextBlurClose = true;
-    window.setTimeout(() => {
-      this.suppressNextBlurClose = false;
-    }, 0);
   };
 
   private handleDocumentKeyDown = (event: KeyboardEvent) => {
@@ -572,10 +568,15 @@ function beginFieldMapping(siteId: string): void {
       formFingerprint
     };
 
-    await chrome.runtime.sendMessage({
+    const response = await sendBackgroundMessage({
       type: "SAVE_FIELD_MAPPING_FROM_PAGE",
       payload
     });
+
+    if (!response.ok) {
+      banner.textContent = response.error;
+      return;
+    }
 
     banner.textContent = "Field mapping saved. Focus the field again to autofill.";
     window.setTimeout(async () => {
@@ -731,18 +732,6 @@ document.addEventListener("focusin", (event) => {
   if (event.target instanceof HTMLElement) {
     void promptController.maybeOpenForTarget(event.target);
   }
-});
-
-document.addEventListener("focusout", () => {
-  window.setTimeout(() => {
-    const active = document.activeElement;
-    const keepOpenForField = active instanceof HTMLElement && isLikelyLoginField(active);
-    const keepOpenForPrompt = promptController?.shouldIgnoreBlurClose() ?? false;
-
-    if (!keepOpenForField && !keepOpenForPrompt) {
-      promptController?.hide();
-    }
-  }, 0);
 });
 
 installSpaNavigationWatcher();
