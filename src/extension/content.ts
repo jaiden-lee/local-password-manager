@@ -89,23 +89,21 @@ async function sendPageAnalysisUpdate(): Promise<void> {
 class FocusPromptController {
   private host: HTMLDivElement;
   private shadow: ShadowRoot;
-  private card: HTMLDivElement;
   private titleEl: HTMLDivElement;
   private subtitleEl: HTMLDivElement;
   private bodyEl: HTMLDivElement;
   private footerEl: HTMLDivElement;
   private statusEl: HTMLDivElement;
-  private anchor: HTMLElement | null = null;
   private state: PopupState | null = null;
-  private rafId = 0;
+  private suppressNextBlurClose = false;
 
   constructor() {
     this.host = document.createElement("div");
     this.host.setAttribute("data-local-password-manager-prompt", "true");
     this.host.style.position = "fixed";
     this.host.style.zIndex = "2147483645";
-    this.host.style.top = "0";
-    this.host.style.left = "0";
+    this.host.style.right = "16px";
+    this.host.style.bottom = "16px";
 
     this.shadow = this.host.attachShadow({ mode: "open" });
     this.shadow.innerHTML = `
@@ -205,7 +203,6 @@ class FocusPromptController {
       </div>
     `;
 
-    this.card = this.shadow.querySelector(".card") as HTMLDivElement;
     this.titleEl = this.shadow.querySelector(".title") as HTMLDivElement;
     this.subtitleEl = this.shadow.querySelector(".subtitle") as HTMLDivElement;
     this.bodyEl = this.shadow.querySelector(".body") as HTMLDivElement;
@@ -214,26 +211,20 @@ class FocusPromptController {
 
     document.addEventListener("pointerdown", this.handleOutsidePointerDown, true);
     document.addEventListener("keydown", this.handleDocumentKeyDown, true);
-    window.addEventListener("scroll", this.schedulePosition, true);
-    window.addEventListener("resize", this.schedulePosition, true);
+    this.shadow.addEventListener("pointerdown", this.handleInsidePointerDown, true);
   }
 
   destroy(): void {
     this.hide();
     document.removeEventListener("pointerdown", this.handleOutsidePointerDown, true);
     document.removeEventListener("keydown", this.handleDocumentKeyDown, true);
-    window.removeEventListener("scroll", this.schedulePosition, true);
-    window.removeEventListener("resize", this.schedulePosition, true);
+    this.shadow.removeEventListener("pointerdown", this.handleInsidePointerDown, true);
   }
 
   hide(): void {
     this.host.remove();
-    this.anchor = null;
     this.state = null;
-    if (this.rafId) {
-      window.cancelAnimationFrame(this.rafId);
-      this.rafId = 0;
-    }
+    this.suppressNextBlurClose = false;
   }
 
   async maybeOpenForTarget(target: HTMLElement): Promise<void> {
@@ -268,7 +259,6 @@ class FocusPromptController {
     }
 
     this.state = state;
-    this.anchor = target;
 
     this.titleEl.textContent = viewModel.title;
     this.subtitleEl.textContent = viewModel.subtitle;
@@ -281,8 +271,6 @@ class FocusPromptController {
     if (!document.documentElement.contains(this.host)) {
       document.documentElement.append(this.host);
     }
-
-    this.schedulePosition();
   }
 
   async refreshForActiveElement(): Promise<void> {
@@ -458,12 +446,30 @@ class FocusPromptController {
     window.setTimeout(() => this.hide(), 500);
   }
 
+  isEventInside(event: Event): boolean {
+    return event.composedPath().includes(this.host);
+  }
+
+  hasFocusWithin(): boolean {
+    return Boolean(this.shadow.activeElement);
+  }
+
+  shouldIgnoreBlurClose(): boolean {
+    return this.suppressNextBlurClose || this.hasFocusWithin();
+  }
+
   private handleOutsidePointerDown = (event: PointerEvent) => {
-    const path = event.composedPath();
-    if (path.includes(this.host)) {
+    if (this.isEventInside(event)) {
       return;
     }
     this.hide();
+  };
+
+  private handleInsidePointerDown = () => {
+    this.suppressNextBlurClose = true;
+    window.setTimeout(() => {
+      this.suppressNextBlurClose = false;
+    }, 0);
   };
 
   private handleDocumentKeyDown = (event: KeyboardEvent) => {
@@ -471,33 +477,6 @@ class FocusPromptController {
       this.hide();
     }
   };
-
-  private schedulePosition = () => {
-    if (this.rafId) {
-      window.cancelAnimationFrame(this.rafId);
-    }
-    this.rafId = window.requestAnimationFrame(() => this.position());
-  };
-
-  private position(): void {
-    if (!this.anchor || !document.documentElement.contains(this.anchor) || !document.documentElement.contains(this.host)) {
-      this.hide();
-      return;
-    }
-
-    const rect = this.anchor.getBoundingClientRect();
-    const cardRect = this.card.getBoundingClientRect();
-    const width = cardRect.width || 320;
-    const height = cardRect.height || 220;
-    const left = Math.min(Math.max(rect.left, 12), window.innerWidth - width - 12);
-    const preferredTop = rect.bottom + 10;
-    const top =
-      preferredTop + height < window.innerHeight
-        ? preferredTop
-        : Math.max(rect.top - height - 10, 12);
-
-    this.host.style.transform = `translate(${left}px, ${top}px)`;
-  }
 
   private setStatus(message: string, tone: "neutral" | "warn" | "error" = "neutral"): void {
     this.statusEl.textContent = message;
@@ -755,15 +734,15 @@ document.addEventListener("focusin", (event) => {
 });
 
 document.addEventListener("focusout", () => {
-  const nextFocus = document.activeElement;
-  if (!(nextFocus instanceof HTMLElement) || !isLikelyLoginField(nextFocus)) {
-    window.setTimeout(() => {
-      const active = document.activeElement;
-      if (!(active instanceof HTMLElement) || !isLikelyLoginField(active)) {
-        promptController?.hide();
-      }
-    }, 0);
-  }
+  window.setTimeout(() => {
+    const active = document.activeElement;
+    const keepOpenForField = active instanceof HTMLElement && isLikelyLoginField(active);
+    const keepOpenForPrompt = promptController?.shouldIgnoreBlurClose() ?? false;
+
+    if (!keepOpenForField && !keepOpenForPrompt) {
+      promptController?.hide();
+    }
+  }, 0);
 });
 
 installSpaNavigationWatcher();
