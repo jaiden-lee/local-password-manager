@@ -17,6 +17,7 @@ import {
 import {
   createId,
   type FillResult,
+  type PendingCredentialSave,
   type PageDetectionResult,
   type PopupState,
   type SiteRecord
@@ -28,6 +29,7 @@ const BADGE_COLORS = {
   needsMapping: "#c16b00",
   unsupported: "#7a1b1b"
 };
+const PENDING_SAVES_KEY = "pendingCredentialSavesByTab";
 
 async function sendToTab<TResponse extends ContentResponse>(
   tabId: number,
@@ -90,6 +92,35 @@ async function buildPopupState(tabId?: number, senderTabId?: number): Promise<Po
         ? storage.lastFillResult
         : null
   };
+}
+
+async function getPendingSaveMap(): Promise<Record<string, PendingCredentialSave>> {
+  const stored = await chrome.storage.session.get(PENDING_SAVES_KEY);
+  const raw = stored[PENDING_SAVES_KEY];
+  return raw && typeof raw === "object" ? (raw as Record<string, PendingCredentialSave>) : {};
+}
+
+async function setPendingSaveMap(map: Record<string, PendingCredentialSave>): Promise<void> {
+  await chrome.storage.session.set({
+    [PENDING_SAVES_KEY]: map
+  });
+}
+
+async function getPendingSave(tabId: number): Promise<PendingCredentialSave | null> {
+  const map = await getPendingSaveMap();
+  return map[String(tabId)] ?? null;
+}
+
+async function upsertPendingSave(tabId: number, pendingSave: PendingCredentialSave): Promise<void> {
+  const map = await getPendingSaveMap();
+  map[String(tabId)] = pendingSave;
+  await setPendingSaveMap(map);
+}
+
+async function clearPendingSave(tabId: number): Promise<void> {
+  const map = await getPendingSaveMap();
+  delete map[String(tabId)];
+  await setPendingSaveMap(map);
 }
 
 async function updateBadge(tabId: number, tabUrl?: string): Promise<void> {
@@ -236,6 +267,74 @@ async function handleSaveCapturedCredential(
   return { ok: true, account };
 }
 
+async function handleCreatePendingSave(
+  tabId: number,
+  currentUrl: string,
+  identifier: string,
+  password: string,
+  label?: string
+): Promise<BackgroundResponse> {
+  const site = await getOrCreateSiteForUrl(currentUrl);
+  if (!site) {
+    return { ok: false, error: "Only http and https pages can store captured credentials." };
+  }
+
+  const storage = await getStorage();
+  const duplicate = storage.accounts.find(
+    (account) =>
+      account.siteId === site.siteId &&
+      account.username.trim().toLowerCase() === identifier.trim().toLowerCase()
+  );
+
+  if (duplicate) {
+    await clearPendingSave(tabId);
+    return { ok: false, error: "That credential is already saved for this site." };
+  }
+
+  const pendingSave: PendingCredentialSave = {
+    currentUrl,
+    identifier: identifier.trim(),
+    password,
+    label: label?.trim() || identifier.trim(),
+    createdAt: new Date().toISOString(),
+    siteId: site.siteId,
+    displayName: site.displayName
+  };
+
+  await upsertPendingSave(tabId, pendingSave);
+  return { ok: true, pendingSave };
+}
+
+async function handleConfirmPendingSave(tabId: number): Promise<BackgroundResponse> {
+  const pendingSave = await getPendingSave(tabId);
+  if (!pendingSave) {
+    return { ok: false, error: "There is no pending credential save for this tab." };
+  }
+
+  const storage = await getStorage();
+  const duplicate = storage.accounts.find(
+    (account) =>
+      account.siteId === pendingSave.siteId &&
+      account.username.trim().toLowerCase() === pendingSave.identifier.trim().toLowerCase()
+  );
+
+  if (duplicate) {
+    await clearPendingSave(tabId);
+    return { ok: false, error: "That credential is already saved for this site." };
+  }
+
+  const account = await addStoredAccount(
+    pendingSave.siteId,
+    pendingSave.label?.trim() || pendingSave.identifier.trim(),
+    pendingSave.identifier.trim(),
+    pendingSave.password,
+    false
+  );
+
+  await clearPendingSave(tabId);
+  return { ok: true, account };
+}
+
 async function handleFill(
   tabId: number,
   siteId: string,
@@ -298,6 +397,10 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void clearPendingSave(tabId);
+});
+
 chrome.tabs.onActivated.addListener((activeInfo) => {
   void updateBadge(activeInfo.tabId);
 });
@@ -344,6 +447,45 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, _sender, sendR
           message.password
         );
         return { ok: true, account };
+      }
+
+      case "CREATE_PENDING_SAVE": {
+        const tabId = message.tabId ?? senderTabId;
+        if (tabId === undefined) {
+          return { ok: false, error: "No browser tab context was available for pending save." };
+        }
+        return handleCreatePendingSave(
+          tabId,
+          message.payload.currentUrl,
+          message.payload.identifier,
+          message.payload.password,
+          message.payload.label
+        );
+      }
+
+      case "GET_PENDING_SAVE": {
+        const tabId = message.tabId ?? senderTabId;
+        if (tabId === undefined) {
+          return { ok: false, error: "No browser tab context was available for pending save lookup." };
+        }
+        return { ok: true, pendingSave: await getPendingSave(tabId) };
+      }
+
+      case "DISMISS_PENDING_SAVE": {
+        const tabId = message.tabId ?? senderTabId;
+        if (tabId === undefined) {
+          return { ok: false, error: "No browser tab context was available for pending save dismissal." };
+        }
+        await clearPendingSave(tabId);
+        return { ok: true, accepted: true };
+      }
+
+      case "CONFIRM_PENDING_SAVE": {
+        const tabId = message.tabId ?? senderTabId;
+        if (tabId === undefined) {
+          return { ok: false, error: "No browser tab context was available for pending save confirmation." };
+        }
+        return handleConfirmPendingSave(tabId);
       }
 
       case "SAVE_CAPTURED_CREDENTIAL":

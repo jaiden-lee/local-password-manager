@@ -17,7 +17,13 @@ import {
   inferAutofillMapping,
   resolveMappedField
 } from "./lib/selectors";
-import type { FieldMapping, PopupState, SaveFieldMappingPayload, StoredAccount } from "./lib/types";
+import type {
+  FieldMapping,
+  PendingCredentialSave,
+  PopupState,
+  SaveFieldMappingPayload,
+  StoredAccount
+} from "./lib/types";
 
 let mappingInProgress = false;
 let cleanupOverlay: (() => void) | null = null;
@@ -95,6 +101,15 @@ async function loadPopupState(): Promise<PopupState | null> {
   }
 
   return response.state;
+}
+
+async function loadPendingSave(): Promise<PendingCredentialSave | null> {
+  const response = await sendBackgroundMessage({ type: "GET_PENDING_SAVE" });
+  if (!response.ok || !("pendingSave" in response)) {
+    return null;
+  }
+
+  return response.pendingSave;
 }
 
 async function sendPageAnalysisUpdate(): Promise<void> {
@@ -535,14 +550,7 @@ class SaveCredentialPromptController {
   private detailsEl: HTMLDivElement;
   private statusEl: HTMLDivElement;
   private footerEl: HTMLDivElement;
-  private payload:
-    | {
-        identifier: string;
-        password: string;
-        currentUrl: string;
-        label: string;
-      }
-    | null = null;
+  private payload: PendingCredentialSave | null = null;
 
   constructor() {
     this.host = document.createElement("div");
@@ -613,19 +621,14 @@ class SaveCredentialPromptController {
     document.removeEventListener("keydown", this.handleDocumentKeyDown, true);
   }
 
-  show(identifier: string, password: string, currentUrl: string): void {
-    this.payload = {
-      identifier,
-      password,
-      currentUrl,
-      label: identifier
-    };
+  show(pendingSave: PendingCredentialSave): void {
+    this.payload = pendingSave;
 
     this.titleEl.textContent = "Save this credential?";
-    this.subtitleEl.textContent = "A new login or signup was detected on this page.";
+    this.subtitleEl.textContent = "A new login or signup was detected in this tab.";
     this.detailsEl.innerHTML = `
-      <div><strong>Account</strong>${escapeHtml(identifier)}</div>
-      <div><strong>Site</strong>${escapeHtml(new URL(currentUrl).hostname)}</div>
+      <div><strong>Account</strong>${escapeHtml(pendingSave.identifier)}</div>
+      <div><strong>Site</strong>${escapeHtml(pendingSave.displayName)}</div>
     `;
     this.statusEl.textContent = "";
     this.statusEl.className = "status";
@@ -637,8 +640,8 @@ class SaveCredentialPromptController {
     this.footerEl.querySelector<HTMLButtonElement>("[data-action='save']")?.addEventListener("click", async () => {
       await this.save();
     });
-    this.footerEl.querySelector<HTMLButtonElement>("[data-action='dismiss']")?.addEventListener("click", () => {
-      this.hide();
+    this.footerEl.querySelector<HTMLButtonElement>("[data-action='dismiss']")?.addEventListener("click", async () => {
+      await this.dismiss();
     });
 
     if (!document.documentElement.contains(this.host)) {
@@ -664,10 +667,7 @@ class SaveCredentialPromptController {
       return;
     }
 
-    const response = await sendBackgroundMessage({
-      type: "SAVE_CAPTURED_CREDENTIAL",
-      payload: this.payload
-    });
+    const response = await sendBackgroundMessage({ type: "CONFIRM_PENDING_SAVE" });
 
     if (!response.ok) {
       this.statusEl.textContent = response.error;
@@ -680,9 +680,19 @@ class SaveCredentialPromptController {
     window.setTimeout(() => this.hide(), 700);
   }
 
+  private async dismiss(): Promise<void> {
+    await sendBackgroundMessage({ type: "DISMISS_PENDING_SAVE" });
+    this.hide();
+  }
+
   hide(): void {
     this.host.remove();
     this.payload = null;
+  }
+
+  private dismissAndHide(): void {
+    void sendBackgroundMessage({ type: "DISMISS_PENDING_SAVE" });
+    this.hide();
   }
 
   private handleOutsidePointerDown = (event: PointerEvent) => {
@@ -690,12 +700,12 @@ class SaveCredentialPromptController {
     if (path.includes(this.host)) {
       return;
     }
-    this.hide();
+    this.dismissAndHide();
   };
 
   private handleDocumentKeyDown = (event: KeyboardEvent) => {
     if (event.key === "Escape") {
-      this.hide();
+      this.dismissAndHide();
     }
   };
 }
@@ -754,9 +764,23 @@ async function maybePromptToSaveCredential(identifier: string, password: string)
     }
   }
 
+  const response = await sendBackgroundMessage({
+    type: "CREATE_PENDING_SAVE",
+    payload: {
+      currentUrl: window.location.href,
+      identifier,
+      password,
+      label: identifier
+    }
+  });
+
+  if (!response.ok || !("pendingSave" in response) || !response.pendingSave) {
+    return;
+  }
+
   savePromptController ??= new SaveCredentialPromptController();
   promptController?.hide();
-  savePromptController.show(identifier, password, window.location.href);
+  savePromptController.show(response.pendingSave);
 }
 
 async function captureAuthAttempt(target: EventTarget | null): Promise<void> {
@@ -965,6 +989,7 @@ function installSpaNavigationWatcher(): void {
     void sendPageAnalysisUpdate();
     window.setTimeout(() => {
       void promptController?.refreshForActiveElement();
+      void restorePendingSavePrompt();
     }, 0);
   };
 
@@ -981,6 +1006,16 @@ function installSpaNavigationWatcher(): void {
   wrapHistoryMethod("replaceState");
   window.addEventListener("popstate", notifyIfUrlChanged);
   window.addEventListener("hashchange", notifyIfUrlChanged);
+}
+
+async function restorePendingSavePrompt(): Promise<void> {
+  const pendingSave = await loadPendingSave();
+  if (!pendingSave) {
+    return;
+  }
+
+  savePromptController ??= new SaveCredentialPromptController();
+  savePromptController.show(pendingSave);
 }
 
 chrome.runtime.onMessage.addListener((message: ContentMessage, _sender, sendResponse) => {
@@ -1068,3 +1103,4 @@ document.addEventListener("focusin", (event) => {
 
 installSpaNavigationWatcher();
 void sendPageAnalysisUpdate();
+void restorePendingSavePrompt();

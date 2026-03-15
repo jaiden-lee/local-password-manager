@@ -124,6 +124,12 @@ export interface CapturedCredentialPayload {
   label?: string;
 }
 
+export interface PendingCredentialSave extends CapturedCredentialPayload {
+  createdAt: string;
+  siteId: string;
+  displayName: string;
+}
+
 export function createId(prefix: string): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return `${prefix}_${crypto.randomUUID()}`;

@@ -3,6 +3,7 @@ import type {
   CapturedCredentialPayload,
   FieldMapping,
   FillFieldsResponse,
+  PendingCredentialSave,
   PopupState,
   SaveFieldMappingPayload,
   SiteRecord,
@@ -15,6 +16,10 @@ export type BackgroundMessage =
   | { type: "START_FIELD_MAPPING"; tabId?: number; siteId: string }
   | { type: "CLEAR_MAPPING"; siteId: string }
   | { type: "SAVE_DEMO_ACCOUNT"; siteId: string; label: string; username: string; password: string }
+  | { type: "CREATE_PENDING_SAVE"; payload: CapturedCredentialPayload; tabId?: number }
+  | { type: "GET_PENDING_SAVE"; tabId?: number }
+  | { type: "DISMISS_PENDING_SAVE"; tabId?: number }
+  | { type: "CONFIRM_PENDING_SAVE"; tabId?: number }
   | { type: "SAVE_CAPTURED_CREDENTIAL"; payload: CapturedCredentialPayload }
   | { type: "FILL_DEMO_ACCOUNT"; tabId?: number; siteId: string; accountId: string; forceOverwrite?: boolean }
   | { type: "SAVE_FIELD_MAPPING_FROM_PAGE"; payload: SaveFieldMappingPayload }
@@ -26,6 +31,7 @@ export type BackgroundResponse =
   | { ok: true; site: SiteRecord }
   | { ok: true; account: StoredAccount }
   | { ok: true; mapping: FieldMapping }
+  | { ok: true; pendingSave: PendingCredentialSave | null }
   | { ok: false; error: string };
 
 export type ContentMessage =
