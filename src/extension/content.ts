@@ -14,9 +14,10 @@ import { detectOAuthProviders } from "./lib/oauth";
 import {
   buildFormFingerprint,
   buildSelectorBundle,
+  inferAutofillMapping,
   resolveMappedField
 } from "./lib/selectors";
-import type { PopupState, SaveFieldMappingPayload, StoredAccount } from "./lib/types";
+import type { FieldMapping, PopupState, SaveFieldMappingPayload, StoredAccount } from "./lib/types";
 
 let mappingInProgress = false;
 let cleanupOverlay: (() => void) | null = null;
@@ -257,8 +258,9 @@ class FocusPromptController {
       return;
     }
 
-    const relevantFields = this.resolveRelevantFields(state);
-    if (state.mapping) {
+    const resolved = resolveUsableMapping(state, target);
+    const relevantFields = this.resolveRelevantFields(resolved.mapping);
+    if (resolved.mapping) {
       const isMappedField =
         relevantFields.username === target || relevantFields.password === target;
       if (!isMappedField) {
@@ -270,21 +272,26 @@ class FocusPromptController {
       return;
     }
 
-    const viewModel = buildAutofillPromptViewModel(state);
+    const effectiveState: PopupState = {
+      ...state,
+      mapping: resolved.mapping
+    };
+
+    const viewModel = buildAutofillPromptViewModel(effectiveState);
     if (!viewModel.visible) {
       this.hide();
       return;
     }
 
-    this.state = state;
+    this.state = effectiveState;
 
     this.titleEl.textContent = viewModel.title;
     this.subtitleEl.textContent = viewModel.subtitle;
     this.statusEl.textContent = "";
     this.statusEl.className = "status";
 
-    this.renderBody(state);
-    this.renderFooter(state);
+    this.renderBody(effectiveState);
+    this.renderFooter(effectiveState, resolved.inferred);
 
     if (!document.documentElement.contains(this.host)) {
       document.documentElement.append(this.host);
@@ -300,24 +307,24 @@ class FocusPromptController {
     }
   }
 
-  private resolveRelevantFields(state: PopupState): {
+  private resolveRelevantFields(mapping: FieldMapping | null): {
     username: HTMLElement | null;
     password: HTMLElement | null;
   } {
-    if (!state.mapping) {
+    if (!mapping) {
       return { username: null, password: null };
     }
 
     const username = resolveMappedField(
       document,
-      state.mapping.username,
-      state.mapping.formFingerprint,
+      mapping.username,
+      mapping.formFingerprint,
       "username"
     ).element;
     const password = resolveMappedField(
       document,
-      state.mapping.password,
-      state.mapping.formFingerprint,
+      mapping.password,
+      mapping.formFingerprint,
       "password"
     ).element;
 
@@ -370,7 +377,7 @@ class FocusPromptController {
     });
   }
 
-  private renderFooter(state: PopupState): void {
+  private renderFooter(state: PopupState, inferred: boolean): void {
     const actions: string[] = [];
 
     if (!state.mapping) {
@@ -382,7 +389,7 @@ class FocusPromptController {
           `<button class="btn btn--primary" type="button" data-action="fill" data-account-id="${account.id}">Fill now</button>`
         );
       }
-      actions.push(`<button class="btn btn--secondary" type="button" data-action="map">Remap fields</button>`);
+      actions.push(`<button class="btn btn--secondary" type="button" data-action="map">${inferred ? "Confirm fields" : "Remap fields"}</button>`);
     }
 
     actions.push(`<button class="btn btn--secondary" type="button" data-action="close">Close</button>`);
@@ -425,6 +432,30 @@ class FocusPromptController {
   private async fill(accountId: string, forceOverwrite = false): Promise<void> {
     if (!this.state?.site) {
       return;
+    }
+
+    const inferredFromState =
+      this.state.mapping && this.state.mapping.mappingId.startsWith("inferred_")
+        ? this.state.mapping
+        : null;
+    const inferredMapping =
+      inferredFromState ??
+      (!this.state.mapping && this.state.site
+        ? inferAutofillMapping(document, this.state.site.siteId)
+        : null);
+    const workingMapping = this.state.mapping ?? inferredMapping;
+
+    if (!workingMapping) {
+      this.setStatus("I could not confidently determine the username and password fields. Map them manually.", "warn");
+      return;
+    }
+
+    if (inferredMapping) {
+      await persistInferredMapping(inferredMapping);
+      this.state = {
+        ...this.state,
+        mapping: inferredMapping
+      };
     }
 
     const response = await sendBackgroundMessage({
@@ -679,10 +710,48 @@ function isDuplicateIdentifier(state: PopupState | null, identifier: string): bo
   );
 }
 
+async function persistInferredMapping(mapping: FieldMapping): Promise<void> {
+  await sendBackgroundMessage({
+    type: "SAVE_FIELD_MAPPING_FROM_PAGE",
+    payload: {
+      siteId: mapping.siteId,
+      username: mapping.username,
+      password: mapping.password,
+      formFingerprint: mapping.formFingerprint
+    }
+  });
+}
+
+function resolveUsableMapping(state: PopupState, anchor?: HTMLElement | null): {
+  mapping: FieldMapping | null;
+  inferred: boolean;
+} {
+  if (state.mapping) {
+    return { mapping: state.mapping, inferred: false };
+  }
+
+  if (!state.site) {
+    return { mapping: null, inferred: false };
+  }
+
+  const inferred = inferAutofillMapping(document, state.site.siteId, anchor);
+  return {
+    mapping: inferred,
+    inferred: Boolean(inferred)
+  };
+}
+
 async function maybePromptToSaveCredential(identifier: string, password: string): Promise<void> {
   const state = await loadPopupState();
   if (isDuplicateIdentifier(state, identifier)) {
     return;
+  }
+
+  if (state?.site && !state.mapping) {
+    const inferred = inferAutofillMapping(document, state.site.siteId);
+    if (inferred) {
+      await persistInferredMapping(inferred);
+    }
   }
 
   savePromptController ??= new SaveCredentialPromptController();

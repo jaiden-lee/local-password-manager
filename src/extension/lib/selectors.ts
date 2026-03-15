@@ -1,5 +1,6 @@
 import type {
   FieldFingerprint,
+  FieldMapping,
   FormFingerprint,
   InputKind,
   SelectorBundle
@@ -244,3 +245,118 @@ export function resolveMappedField(
   return { element: null, usedFallback: false };
 }
 
+function scorePasswordField(element: HTMLInputElement): number {
+  let score = 0;
+  const autocomplete = (element.autocomplete || "").toLowerCase();
+  const signal = [
+    element.name,
+    element.id,
+    element.placeholder,
+    element.getAttribute("aria-label") || "",
+    getLabelText(element)
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  score += 10;
+  if (autocomplete === "current-password") score += 8;
+  if (autocomplete === "password") score += 6;
+  if (signal.includes("password")) score += 4;
+  if (signal.includes("current")) score += 2;
+  if (signal.includes("confirm") || signal.includes("repeat") || signal.includes("verify")) score -= 6;
+  if (autocomplete === "new-password") score -= 6;
+  return score;
+}
+
+function scoreUsernameField(element: HTMLInputElement | HTMLTextAreaElement): number {
+  const type = element instanceof HTMLInputElement ? (element.type || "text").toLowerCase() : "text";
+  const autocomplete = (element.getAttribute("autocomplete") || "").toLowerCase();
+  const signal = [
+    element.getAttribute("name") || "",
+    element.getAttribute("id") || "",
+    element.getAttribute("placeholder") || "",
+    element.getAttribute("aria-label") || "",
+    getLabelText(element)
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  let score = 0;
+  if (autocomplete === "username") score += 10;
+  if (type === "email") score += 8;
+  if (signal.includes("email")) score += 7;
+  if (signal.includes("username")) score += 7;
+  if (signal.includes("user")) score += 4;
+  if (signal.includes("login")) score += 3;
+  if (signal.includes("phone")) score += 2;
+  if (["text", "email", "search", "tel", "url"].includes(type)) score += 1;
+  return score;
+}
+
+function getRelevantScope(root: Document, anchor?: HTMLElement | null): ParentNode {
+  const form = anchor?.closest("form");
+  if (form) {
+    return form;
+  }
+
+  if (anchor?.parentElement?.querySelector("input[type='password']")) {
+    return anchor.parentElement;
+  }
+
+  const forms = Array.from(root.querySelectorAll("form"));
+  const authForm = forms.find((formElement) => formElement.querySelector("input[type='password']"));
+  return authForm ?? root;
+}
+
+export function inferAutofillMapping(
+  root: Document,
+  siteId: string,
+  anchor?: HTMLElement | null
+): FieldMapping | null {
+  const scope = getRelevantScope(root, anchor);
+  const inputs = Array.from(scope.querySelectorAll("input, textarea")).filter(
+    (element): element is HTMLInputElement | HTMLTextAreaElement =>
+      element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+  );
+
+  const passwordCandidates = inputs
+    .filter((element): element is HTMLInputElement => element instanceof HTMLInputElement && element.type.toLowerCase() === "password")
+    .sort((left, right) => scorePasswordField(right) - scorePasswordField(left));
+
+  const passwordField = passwordCandidates[0] ?? null;
+  if (!passwordField || scorePasswordField(passwordField) < 8) {
+    return null;
+  }
+
+  const usernameCandidates = inputs
+    .filter((element) => element !== passwordField)
+    .filter((element) => {
+      if (element instanceof HTMLTextAreaElement) {
+        return true;
+      }
+      const type = (element.type || "text").toLowerCase();
+      return ["text", "email", "search", "tel", "url"].includes(type);
+    })
+    .sort((left, right) => scoreUsernameField(right) - scoreUsernameField(left));
+
+  const usernameField =
+    usernameCandidates.find((candidate) => scoreUsernameField(candidate) >= 3) ??
+    (() => {
+      const passwordIndex = inputs.indexOf(passwordField);
+      return passwordIndex > 0 ? inputs[passwordIndex - 1] : null;
+    })();
+
+  if (!usernameField) {
+    return null;
+  }
+
+  return {
+    mappingId: `inferred_${siteId}`,
+    siteId,
+    username: buildSelectorBundle(usernameField as HTMLElement, "username"),
+    password: buildSelectorBundle(passwordField, "password"),
+    formFingerprint: buildFormFingerprint(passwordField),
+    lastVerifiedAt: new Date().toISOString(),
+    stale: false
+  };
+}
