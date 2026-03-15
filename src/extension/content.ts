@@ -4,6 +4,10 @@ import type {
   ContentMessage,
   ContentResponse
 } from "./lib/messages";
+import {
+  extractAuthAttemptFromTarget,
+  isLikelySubmitControl
+} from "./lib/authForms";
 import { buildAutofillPromptViewModel, pickPrimaryAccount } from "./lib/inlineAutofill";
 import { countCandidateLoginForms, detectCrossOriginFrames, fillInput } from "./lib/dom";
 import { detectOAuthProviders } from "./lib/oauth";
@@ -17,7 +21,10 @@ import type { PopupState, SaveFieldMappingPayload, StoredAccount } from "./lib/t
 let mappingInProgress = false;
 let cleanupOverlay: (() => void) | null = null;
 let promptController: FocusPromptController | null = null;
+let savePromptController: SaveCredentialPromptController | null = null;
 let lastKnownUrl = window.location.href;
+let lastCapturedSignature = "";
+let lastCapturedAt = 0;
 
 function analyzePage() {
   return {
@@ -489,6 +496,216 @@ class FocusPromptController {
   }
 }
 
+class SaveCredentialPromptController {
+  private host: HTMLDivElement;
+  private shadow: ShadowRoot;
+  private titleEl: HTMLDivElement;
+  private subtitleEl: HTMLDivElement;
+  private detailsEl: HTMLDivElement;
+  private statusEl: HTMLDivElement;
+  private footerEl: HTMLDivElement;
+  private payload:
+    | {
+        identifier: string;
+        password: string;
+        currentUrl: string;
+        label: string;
+      }
+    | null = null;
+
+  constructor() {
+    this.host = document.createElement("div");
+    this.host.setAttribute("data-local-password-manager-save-prompt", "true");
+    this.host.style.position = "fixed";
+    this.host.style.zIndex = "2147483646";
+    this.host.style.right = "16px";
+    this.host.style.bottom = "16px";
+
+    this.shadow = this.host.attachShadow({ mode: "open" });
+    this.shadow.innerHTML = `
+      <style>
+        :host { all: initial; }
+        .card {
+          font-family: "Segoe UI", sans-serif;
+          width: min(340px, calc(100vw - 24px));
+          color: #172016;
+          background: linear-gradient(180deg, rgba(255,255,255,0.99), rgba(244,247,240,0.99));
+          border: 1px solid rgba(17, 24, 39, 0.08);
+          border-radius: 18px;
+          box-shadow: 0 24px 56px rgba(17, 24, 39, 0.2);
+          padding: 14px;
+          display: grid;
+          gap: 12px;
+        }
+        .eyebrow { text-transform: uppercase; letter-spacing: 0.08em; color: #5d6a58; font-size: 10px; }
+        .title { font-size: 16px; font-weight: 700; }
+        .subtitle, .details, .status { color: #4d5a49; font-size: 12px; line-height: 1.45; }
+        .details { background: rgba(233,239,229,0.8); border-radius: 12px; padding: 10px 12px; }
+        .details strong { display: block; color: #172016; font-size: 11px; text-transform: uppercase; margin-bottom: 2px; }
+        .status.error { color: #a2261b; }
+        .footer { display: flex; flex-wrap: wrap; gap: 8px; }
+        .btn {
+          border: none;
+          border-radius: 999px;
+          padding: 9px 12px;
+          cursor: pointer;
+          font: 600 12px/1 "Segoe UI", sans-serif;
+        }
+        .btn--primary { background: #0f7a61; color: #fff; }
+        .btn--secondary { background: #e9efe5; color: #172016; }
+      </style>
+      <div class="card" role="dialog" aria-modal="false" aria-label="Save credential prompt">
+        <div>
+          <div class="eyebrow">Save Credential</div>
+          <div class="title"></div>
+        </div>
+        <div class="subtitle"></div>
+        <div class="details"></div>
+        <div class="status"></div>
+        <div class="footer"></div>
+      </div>
+    `;
+
+    this.titleEl = this.shadow.querySelector(".title") as HTMLDivElement;
+    this.subtitleEl = this.shadow.querySelector(".subtitle") as HTMLDivElement;
+    this.detailsEl = this.shadow.querySelector(".details") as HTMLDivElement;
+    this.statusEl = this.shadow.querySelector(".status") as HTMLDivElement;
+    this.footerEl = this.shadow.querySelector(".footer") as HTMLDivElement;
+
+    document.addEventListener("pointerdown", this.handleOutsidePointerDown, true);
+    document.addEventListener("keydown", this.handleDocumentKeyDown, true);
+  }
+
+  destroy(): void {
+    this.hide();
+    document.removeEventListener("pointerdown", this.handleOutsidePointerDown, true);
+    document.removeEventListener("keydown", this.handleDocumentKeyDown, true);
+  }
+
+  show(identifier: string, password: string, currentUrl: string): void {
+    this.payload = {
+      identifier,
+      password,
+      currentUrl,
+      label: identifier
+    };
+
+    this.titleEl.textContent = "Save this credential?";
+    this.subtitleEl.textContent = "A new login or signup was detected on this page.";
+    this.detailsEl.innerHTML = `
+      <div><strong>Account</strong>${escapeHtml(identifier)}</div>
+      <div><strong>Site</strong>${escapeHtml(new URL(currentUrl).hostname)}</div>
+    `;
+    this.statusEl.textContent = "";
+    this.statusEl.className = "status";
+    this.footerEl.innerHTML = `
+      <button class="btn btn--primary" type="button" data-action="save">Save</button>
+      <button class="btn btn--secondary" type="button" data-action="dismiss">Not now</button>
+    `;
+
+    this.footerEl.querySelector<HTMLButtonElement>("[data-action='save']")?.addEventListener("click", async () => {
+      await this.save();
+    });
+    this.footerEl.querySelector<HTMLButtonElement>("[data-action='dismiss']")?.addEventListener("click", () => {
+      this.hide();
+    });
+
+    if (!document.documentElement.contains(this.host)) {
+      document.documentElement.append(this.host);
+    }
+  }
+
+  isOpen(): boolean {
+    return document.documentElement.contains(this.host);
+  }
+
+  containsElement(element: HTMLElement | null): boolean {
+    if (!element) {
+      return false;
+    }
+
+    const rootNode = element.getRootNode();
+    return rootNode === this.shadow || this.host.contains(element);
+  }
+
+  private async save(): Promise<void> {
+    if (!this.payload) {
+      return;
+    }
+
+    const response = await sendBackgroundMessage({
+      type: "SAVE_CAPTURED_CREDENTIAL",
+      payload: this.payload
+    });
+
+    if (!response.ok) {
+      this.statusEl.textContent = response.error;
+      this.statusEl.className = "status error";
+      return;
+    }
+
+    this.statusEl.textContent = "Credential saved locally in the extension.";
+    this.statusEl.className = "status";
+    window.setTimeout(() => this.hide(), 700);
+  }
+
+  hide(): void {
+    this.host.remove();
+    this.payload = null;
+  }
+
+  private handleOutsidePointerDown = (event: PointerEvent) => {
+    const path = event.composedPath();
+    if (path.includes(this.host)) {
+      return;
+    }
+    this.hide();
+  };
+
+  private handleDocumentKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Escape") {
+      this.hide();
+    }
+  };
+}
+
+function isDuplicateIdentifier(state: PopupState | null, identifier: string): boolean {
+  if (!state?.site) {
+    return false;
+  }
+
+  return state.accounts.some(
+    (account) => account.username.trim().toLowerCase() === identifier.trim().toLowerCase()
+  );
+}
+
+async function maybePromptToSaveCredential(identifier: string, password: string): Promise<void> {
+  const state = await loadPopupState();
+  if (isDuplicateIdentifier(state, identifier)) {
+    return;
+  }
+
+  savePromptController ??= new SaveCredentialPromptController();
+  promptController?.hide();
+  savePromptController.show(identifier, password, window.location.href);
+}
+
+async function captureAuthAttempt(target: EventTarget | null): Promise<void> {
+  const attempt = extractAuthAttemptFromTarget(target);
+  if (!attempt) {
+    return;
+  }
+
+  const now = Date.now();
+  if (attempt.signature === lastCapturedSignature && now - lastCapturedAt < 1500) {
+    return;
+  }
+
+  lastCapturedSignature = attempt.signature;
+  lastCapturedAt = now;
+  await maybePromptToSaveCredential(attempt.identifier, attempt.password);
+}
+
 function beginFieldMapping(siteId: string): void {
   if (mappingInProgress) {
     return;
@@ -675,6 +892,7 @@ function installSpaNavigationWatcher(): void {
     lastKnownUrl = window.location.href;
     cleanupOverlay?.();
     promptController?.hide();
+    savePromptController?.hide();
     void sendPageAnalysisUpdate();
     window.setTimeout(() => {
       void promptController?.refreshForActiveElement();
@@ -733,12 +951,45 @@ chrome.storage.onChanged.addListener(() => {
   void promptController?.refreshForActiveElement();
 });
 
+document.addEventListener("submit", (event) => {
+  void captureAuthAttempt(event.target);
+}, true);
+
+document.addEventListener("click", (event) => {
+  const target = event.target instanceof HTMLElement ? event.target.closest("button, input[type='submit'], input[type='button'], a, div[role='button']") : null;
+  if (!(target instanceof HTMLElement) || !isLikelySubmitControl(target)) {
+    return;
+  }
+
+  window.setTimeout(() => {
+    void captureAuthAttempt(target);
+  }, 0);
+}, true);
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") {
+    return;
+  }
+
+  const target = event.target instanceof HTMLElement ? event.target : null;
+  if (!target) {
+    return;
+  }
+
+  window.setTimeout(() => {
+    void captureAuthAttempt(target);
+  }, 0);
+}, true);
+
 document.addEventListener("focusin", (event) => {
   if (!promptController) {
     promptController = new FocusPromptController();
   }
 
   if (event.target instanceof HTMLElement) {
+    if (savePromptController?.containsElement(event.target)) {
+      return;
+    }
     if (promptController.containsElement(event.target)) {
       return;
     }

@@ -5,6 +5,7 @@ import type {
   ContentResponse
 } from "./lib/messages";
 import {
+  addStoredAccount,
   addDemoAccount,
   clearMapping,
   ensureDefaultAccount,
@@ -173,6 +174,68 @@ async function handleSaveSiteRule(
   return { ok: true, site };
 }
 
+async function getOrCreateSiteForUrl(currentUrl: string): Promise<SiteRecord | null> {
+  const normalized = normalizeUrl(currentUrl);
+  if (!normalized) {
+    return null;
+  }
+
+  const storage = await getStorage();
+  const existing = findMatchingSite(storage.sites, currentUrl);
+  if (existing) {
+    return existing;
+  }
+
+  const site: SiteRecord = {
+    siteId: createId("site"),
+    origin: normalized.origin,
+    pathPrefix: normalizePathPrefix(normalized.pathPrefix),
+    displayName: new URL(currentUrl).hostname,
+    loginMethod: "password",
+    notes: ""
+  };
+
+  await setStorage({
+    ...storage,
+    sites: [...storage.sites, site]
+  });
+
+  return site;
+}
+
+async function handleSaveCapturedCredential(
+  currentUrl: string,
+  identifier: string,
+  password: string,
+  label?: string
+): Promise<BackgroundResponse> {
+  const site = await getOrCreateSiteForUrl(currentUrl);
+  if (!site) {
+    return { ok: false, error: "Only http and https pages can store captured credentials." };
+  }
+
+  const storage = await getStorage();
+  const duplicate = storage.accounts.find(
+    (account) =>
+      account.siteId === site.siteId &&
+      account.username.trim().toLowerCase() === identifier.trim().toLowerCase()
+  );
+
+  if (duplicate) {
+    return { ok: false, error: "That credential is already saved for this site." };
+  }
+
+  const account = await addStoredAccount(
+    site.siteId,
+    label?.trim() || identifier.trim(),
+    identifier.trim(),
+    password,
+    false
+  );
+
+  return { ok: true, account };
+}
+
 async function handleFill(
   tabId: number,
   siteId: string,
@@ -282,6 +345,14 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, _sender, sendR
         );
         return { ok: true, account };
       }
+
+      case "SAVE_CAPTURED_CREDENTIAL":
+        return handleSaveCapturedCredential(
+          message.payload.currentUrl,
+          message.payload.identifier,
+          message.payload.password,
+          message.payload.label
+        );
 
       case "FILL_DEMO_ACCOUNT":
         if (message.tabId === undefined && senderTabId === undefined) {

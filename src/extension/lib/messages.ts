@@ -1,5 +1,6 @@
 import type {
   AnalyzePageResponse,
+  CapturedCredentialPayload,
   FieldMapping,
   FillFieldsResponse,
   PopupState,
@@ -14,6 +15,7 @@ export type BackgroundMessage =
   | { type: "START_FIELD_MAPPING"; tabId?: number; siteId: string }
   | { type: "CLEAR_MAPPING"; siteId: string }
   | { type: "SAVE_DEMO_ACCOUNT"; siteId: string; label: string; username: string; password: string }
+  | { type: "SAVE_CAPTURED_CREDENTIAL"; payload: CapturedCredentialPayload }
   | { type: "FILL_DEMO_ACCOUNT"; tabId?: number; siteId: string; accountId: string; forceOverwrite?: boolean }
   | { type: "SAVE_FIELD_MAPPING_FROM_PAGE"; payload: SaveFieldMappingPayload }
   | { type: "PAGE_ANALYSIS_UPDATE"; url: string; analysis: AnalyzePageResponse };

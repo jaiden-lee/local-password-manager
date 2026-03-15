@@ -88,6 +88,16 @@ export async function addDemoAccount(
   username: string,
   password: string
 ): Promise<StoredAccount> {
+  return addStoredAccount(siteId, label, username, password, true);
+}
+
+export async function addStoredAccount(
+  siteId: string,
+  label: string,
+  username: string,
+  password: string,
+  isDemo = false
+): Promise<StoredAccount> {
   const state = await getStorage();
   const account: StoredAccount = {
     id: createId("acct"),
@@ -95,7 +105,7 @@ export async function addDemoAccount(
     label,
     username,
     password,
-    isDemo: true
+    isDemo
   };
 
   await setStorage({
@@ -135,4 +145,3 @@ export async function setLastFillResult(result: FillResult | null): Promise<void
     lastFillResult: result
   });
 }
-

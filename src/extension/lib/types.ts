@@ -117,6 +117,13 @@ export interface FillFieldsResponse {
   usedFallback: boolean;
 }
 
+export interface CapturedCredentialPayload {
+  currentUrl: string;
+  identifier: string;
+  password: string;
+  label?: string;
+}
+
 export function createId(prefix: string): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return `${prefix}_${crypto.randomUUID()}`;
@@ -124,4 +131,3 @@ export function createId(prefix: string): string {
 
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
-
